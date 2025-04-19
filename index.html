@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CPU Usage Monitor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        
+        .stats-container {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        
+        .stat-box {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            text-align: center;
+            flex: 1;
+            margin: 0 10px;
+        }
+        
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 20px;
+        }
+        
+        .status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .status.connected {
+            background-color: #28a745;
+            color: white;
+        }
+        
+        .status.disconnected {
+            background-color: #dc3545;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CPU Usage Monitor</h1>
+        
+        <div class="stats-container">
+            <div class="stat-box">
+                <div class="stat-label">Current CPU Usage</div>
+                <div class="stat-value" id="currentUsage">0%</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Average Usage</div>
+                <div class="stat-value" id="avgUsage">0%</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Peak Usage</div>
+                <div class="stat-value" id="peakUsage">0%</div>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <canvas id="cpuChart"></canvas>
+        </div>
+    </div>
+    
+    <div id="connectionStatus" class="status disconnected">Disconnected</div>
+
+    <script>
+        const maxDataPoints = 60; // Show last 60 seconds
+        let dataPoints = [];
+        
+        // Initialize Chart.js
+        const ctx = document.getElementById('cpuChart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'CPU Usage %',
+                    data: [],
+                    borderColor: '#007bff',
+                    backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        title: {
+                            display: true,
+                            text: 'CPU Usage (%)'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                }
+            }
+        });
+
+        function updateStats() {
+            if (dataPoints.length === 0) return;
+            
+            // Update current usage
+            const currentUsage = dataPoints[dataPoints.length - 1].usage;
+            document.getElementById('currentUsage').textContent = 
+                `${currentUsage.toFixed(1)}%`;
+            
+            // Calculate average usage
+            const avgUsage = dataPoints.reduce((sum, point) => 
+                sum + point.usage, 0) / dataPoints.length;
+            document.getElementById('avgUsage').textContent = 
+                `${avgUsage.toFixed(1)}%`;
+            
+            // Calculate peak usage
+            const peakUsage = Math.max(...dataPoints.map(point => point.usage));
+            document.getElementById('peakUsage').textContent = 
+                `${peakUsage.toFixed(1)}%`;
+        }
+
+        function updateChart() {
+            const labels = dataPoints.map(point => {
+                const date = new Date(point.timestamp * 1000);
+                return date.toLocaleTimeString();
+            });
+            
+            const data = dataPoints.map(point => point.usage);
+            
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = data;
+            chart.update();
+        }
+
+        function connectToServer() {
+            const statusElement = document.getElementById('connectionStatus');
+            const eventSource = new EventSource('http://localhost:8080/events');
+            
+            eventSource.onopen = () => {
+                statusElement.textContent = 'Connected';
+                statusElement.classList.remove('disconnected');
+                statusElement.classList.add('connected');
+            };
+            
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                dataPoints.push(data);
+                if (dataPoints.length > maxDataPoints) {
+                    dataPoints.shift();
+                }
+                
+                updateStats();
+                updateChart();
+            };
+            
+            eventSource.onerror = () => {
+                statusElement.textContent = 'Disconnected - Retrying...';
+                statusElement.classList.remove('connected');
+                statusElement.classList.add('disconnected');
+            };
+            
+            return eventSource;
+        }
+
+        // Start the connection
+        let eventSource = connectToServer();
+
+        // Reconnect if the page becomes visible again
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                if (eventSource) {
+                    eventSource.close();
+                }
+                eventSource = connectToServer();
+            }
+        });
+    </script>
+</body>
+</html>
